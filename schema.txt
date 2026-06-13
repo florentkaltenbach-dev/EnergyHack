@@ -83,3 +83,4 @@ baseline_pr · expected_power · degradation_trend · degradation_rates
 incident_flags · loss_attribution · financial_loss · revenue_loss · work_orders
 validation_cases · validation_exclusions · v_fix_first
 repair_effectiveness
+group_residual_monthly · group_drift_summary
