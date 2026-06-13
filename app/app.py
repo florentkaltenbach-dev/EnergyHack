@@ -4,9 +4,13 @@ import os
 import sys
 
 import streamlit as st
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from db.db import run_query
+from analysis.leadtime import plot_timeline
 
 DEMO_INV = "INV 01.07.045"  # Demo story: Strangausfall, 5yr open ticket, €5,309 technical loss
 
@@ -37,6 +41,18 @@ def overview():
     cols[3].metric("Weather uncertain", f"€{totals.uncertain_eur:,.0f}")
     cols[4].metric("Fault hours", f"{fault_hours:,.0f}")
 
+    # AI-84: Fleet recoverable headline (annualised, curtailment excluded)
+    try:
+        hl = query("SELECT * FROM fleet_headline").iloc[0]
+        st.success(
+            f"**Fleet recoverable: €{hl.recoverable_eur_yr:,.0f}/yr** — "
+            f"technical loss only, curtailment excluded  "
+            f"({hl.first_day} – {hl.last_day}, {hl.years_covered:.1f} yr covered  |  "
+            f"{int(hl.n_inverters)} inverters  |  top-3 = {hl.top3_share_pct:.1f}% of total)"
+        )
+    except Exception:
+        pass
+
     st.subheader("Fix First ranking")
     ranking = query("SELECT * FROM v_fix_first ORDER BY avoidable_loss_eur DESC")
     st.dataframe(
@@ -49,6 +65,53 @@ def overview():
         hide_index=True, width="stretch",
         column_config={"Avoidable €": st.column_config.NumberColumn(format="€ %.0f")},
     )
+
+    # AI-85: Lead-time vs ticket
+    try:
+        lt = query("""
+            SELECT COUNT(*)                        AS n_matched,
+                   COUNT(days_to_ticket)           AS n_with_ticket,
+                   ROUND(MEDIAN(days_to_ticket), 0) AS med_ticket,
+                   ROUND(MEDIAN(days_to_error),  0) AS med_error
+            FROM lead_time_matches
+        """).iloc[0]
+        st.subheader("Early-warning lead time")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Matched incidents", f"{int(lt.n_with_ticket)}")
+        c2.metric("Median flag → ticket", f"{int(lt.med_ticket)} days")
+        c3.metric("Median flag → error code", f"{int(lt.med_error)} days")
+
+        example = query("""
+            SELECT inverter_id,
+                   incident_start::VARCHAR,
+                   first_error_date::VARCHAR,
+                   ticket_opened::VARCHAR,
+                   days_to_error,
+                   days_to_ticket
+            FROM lead_time_matches
+            WHERE days_to_ticket > 0
+              AND days_to_error  > 0
+              AND days_to_ticket > days_to_error
+            ORDER BY days_to_ticket DESC
+            LIMIT 1
+        """)
+        if example.empty:
+            example = query("""
+                SELECT inverter_id,
+                       incident_start::VARCHAR,
+                       first_error_date::VARCHAR,
+                       ticket_opened::VARCHAR,
+                       days_to_error,
+                       days_to_ticket
+                FROM lead_time_matches
+                WHERE days_to_ticket > 0
+                ORDER BY days_to_ticket DESC LIMIT 1
+            """)
+        if not example.empty:
+            fig = plot_timeline(tuple(example.iloc[0]))
+            st.pyplot(fig, clear_figure=True)
+    except Exception:
+        pass
 
 
 def detail():
