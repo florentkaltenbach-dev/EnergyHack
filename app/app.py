@@ -29,6 +29,20 @@ def seed_agent(prompt, context_key):
     st.session_state["agent_seed_context"] = context_key
 
 
+def update_page_route():
+    page = st.session_state["selected_page"]
+    st.query_params["page"] = page
+    st.session_state["route_page"] = page
+    if page == "Overview":
+        st.query_params.pop("inverter", None)
+
+
+def update_inverter_route():
+    inverter_id = st.session_state["selected_inverter"]
+    st.query_params["inverter"] = inverter_id
+    st.session_state["route_inverter"] = inverter_id
+
+
 def overview():
     st.title("SolarMind: Fix First")
     st.caption("Losses are separated into unrestricted technical loss, plant curtailment, and weather-uncertain data.")
@@ -134,8 +148,17 @@ def overview():
 def detail():
     st.title("Inverter evidence")
     inverter_ids = query("SELECT inverter_id FROM v_fix_first ORDER BY avoidable_loss_eur DESC")["inverter_id"].tolist()
-    default = inverter_ids.index(DEMO_INV) if DEMO_INV in inverter_ids else 0
-    inv = st.sidebar.selectbox("Inverter", inverter_ids, index=default)
+    requested_inverter = st.query_params.get("inverter", DEMO_INV)
+    default = inverter_ids.index(requested_inverter) if requested_inverter in inverter_ids else 0
+    if st.session_state.get("route_inverter") != requested_inverter:
+        st.session_state["selected_inverter"] = inverter_ids[default]
+        st.session_state["route_inverter"] = inverter_ids[default]
+    inv = st.sidebar.selectbox(
+        "Inverter",
+        inverter_ids,
+        key="selected_inverter",
+        on_change=update_inverter_route,
+    )
 
     summary = query(f"SELECT * FROM v_fix_first WHERE inverter_id = '{inv}'").iloc[0]
     cols = st.columns(4)
@@ -250,6 +273,17 @@ def agent_rail(page, inverter_id=None):
         st.rerun()
 
 
-page = st.sidebar.radio("Page", ["Overview", "Inverter detail"])
+pages = ["Overview", "Inverter detail"]
+requested_page = st.query_params.get("page", "Overview")
+page_index = pages.index(requested_page) if requested_page in pages else 0
+if st.session_state.get("route_page") != requested_page:
+    st.session_state["selected_page"] = pages[page_index]
+    st.session_state["route_page"] = pages[page_index]
+page = st.sidebar.radio(
+    "Page",
+    pages,
+    key="selected_page",
+    on_change=update_page_route,
+)
 selected_inverter = overview() if page == "Overview" else detail()
 agent_rail(page, selected_inverter)

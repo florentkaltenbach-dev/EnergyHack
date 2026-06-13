@@ -18,6 +18,7 @@ answer = ask("What should I fix first, and why?", limit=3)
 for row in top.itertuples():
     assert row.inverter_id in answer
     assert f"EUR {row.avoidable_loss_eur:,.0f}" in answer
+    assert f"?page=Inverter+detail&inverter={row.inverter_id.replace(' ', '+')}" in answer
 
 print(answer)
 
@@ -26,8 +27,11 @@ context_answer = ask(
     page="Inverter detail",
     inverter_id="INV 01.07.045",
 )
-assert "Context: Inverter detail / INV 01.07.045" in context_answer
+assert "Context: Inverter detail / [INV 01.07.045]" in context_answer
 assert "EUR 5,309" in context_answer
-assert "95% CI" in context_answer
+assert "confidence interval" in context_answer
+assert "#annual-loss-attribution" in context_answer
+assert "#service-tickets" in context_answer
+assert "#fault-code-evidence" in context_answer
 print("\nContext-aware answer:\n" + context_answer)
 print("M5/M6 verification passed")
