@@ -4,3 +4,12 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+
+# Raw data is shared out-of-band (too large for git) — each laptop drops the
+# files into data/ and runs `python db/loader.py`. Keep the folder structure
+# (.gitkeep) but never commit the big files.
+data/**/*.parquet
+data/**/*.xlsb
+data/**/*.csv
+data/**/*.xlsx
+!data/**/.gitkeep

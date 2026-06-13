@@ -14,14 +14,25 @@ TOOLS YOU HAVE
 3. create_chart(...)       → visualise query results
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DATABASE TABLES
+DATABASE TABLES  (65 inverters, 5-min data, 2016-12-31 → 2026-06-01)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-- monitoring         minute-level power output per inverter
-- error_events       error codes with timestamps
-- error_descriptions human-readable meaning of each error code
-- tariffs            monthly feed-in electricity price (€/kWh)
-- system_overview    rated capacity (kWp) per inverter
-- tickets            maintenance service records
+- fact_power     (ts, inverter_id, p_ac_kw, i_dc_a, u_dc_v)  power per inverter, LONG
+- fact_plant     (ts, irradiation_wm2, altitude_deg, temp_ambient_c, temp_module_c,
+                  dv_pct, evu_pct, plant_pac_kw, ...)         plant-wide, per timestamp
+- fault_events   (ts, inverter_id, error_code, op_state)     only real faults (code<>0)
+- dim_error_desc (component, hex, error_code, description)    error code → meaning
+- dim_inverters  (inverter_id, kwp, module_type, n_modules, n_strings, ...) nameplate
+- dim_tariff     (inverter_id, week_start, tariff_ct_kwh)     weekly price, EUROCENT/kWh
+- tickets_recent / tickets_legacy                            maintenance records
+
+inverter_id format is 'INV 01.01.001' (leading 'INV ', zero-padded).
+
+CRITICAL UNITS / FORMULAS
+- Energy kWh = SUM(p_ac_kw) / 12.0   (5-min data → 12 intervals per hour, NOT /60)
+- Revenue € = kWh * tariff_ct_kwh / 100.0   (tariff is in eurocent)
+- Daytime only: fact_plant.altitude_deg > 0
+- Curtailment (NOT a fault): fact_plant.dv_pct > 0 (operator) or evu_pct > 0 (grid)
+- Fault hours ≈ COUNT(*) * 5 / 60 over fault_events rows (5-min intervals)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HOW TO ANSWER QUESTIONS

@@ -1,0 +1,104 @@
+SOLARMIND — DATABASE SCHEMA (Plant A)            P1 → P2/P3/P4 handoff
+=====================================================================
+Build it:   python db/loader.py        (≈ 50 s, needs raw files in data/)
+Query it:   from db.db import run_query, get_schema
+
+KEY FACTS
+---------
+* 65 inverters, IDs normalised everywhere as "INV 01.01.001" .. "INV 01.09.065"
+* Time span: 2016-12-31 22:00  →  2026-06-01 21:55,  5-MINUTE resolution
+* 990,442 timestamps. Power is stored LONG (one row per inverter per timestamp).
+* Total installed capacity: 1793.6 kWp across the 65 inverters.
+
+CRITICAL FORMULAS (get these right or numbers will be wrong)
+------------------------------------------------------------
+* ENERGY:   data is 5-min power in kW, so kWh = SUM(p_ac_kw) / 12.0
+            (12 five-minute intervals per hour). NOT /60.
+* REVENUE:  tariff is in EUROCENT/kWh → euros = kwh * tariff_ct_kwh / 100.0
+* DAYLIGHT: fact_plant.altitude_deg > 0  ≈ sun is up (filter night out).
+* CURTAILMENT (NOT a fault): fact_plant.dv_pct  > 0 = operator curtailment,
+                             fact_plant.evu_pct > 0 = grid-operator curtailment.
+* DOWNTIME: fault_events holds only real faults (error_code <> 0). Each row = a
+            5-min interval in that fault state → hours ≈ COUNT(*) * 5 / 60.
+
+TABLES
+------
+fact_power      (64,378,730 rows)   one row per inverter per 5-min timestamp
+    ts            TIMESTAMP
+    inverter_id   VARCHAR           'INV 01.01.001'
+    p_ac_kw       DOUBLE            AC power output (main metric)
+    i_dc_a        DOUBLE            DC input current
+    u_dc_v        DOUBLE            DC input voltage
+
+fact_plant      (990,442 rows)      one row per 5-min timestamp (plant-wide)
+    ts            TIMESTAMP
+    irradiation_wm2  DOUBLE         most influential driver of output
+    altitude_deg     DOUBLE         sun height (>0 = daytime)
+    temp_ambient_c   DOUBLE
+    temp_module_c    DOUBLE
+    dv_pct           DOUBLE         operator curtailment %  (not a fault)
+    evu_pct          DOUBLE         grid curtailment %      (not a fault)
+    plant_pac_kw     DOUBLE         total plant power fed to grid (Janitza)
+    cosphi           DOUBLE
+    grid_i_ac_a      DOUBLE
+    grid_s_kva       DOUBLE
+
+fault_events    (439,010 rows)      only rows where an inverter reported a fault
+    ts            TIMESTAMP
+    inverter_id   VARCHAR
+    error_code    BIGINT            decimal code; join dim_error_desc.error_code
+    op_state      BIGINT            operational state code
+
+dim_error_desc  (65 rows)           error code → meaning (German)
+    component     VARCHAR
+    hex           VARCHAR
+    error_code    BIGINT            join key to fault_events.error_code
+    description   VARCHAR
+
+dim_inverters   (65 rows)           per-inverter nameplate
+    inverter_id   VARCHAR
+    location      VARCHAR
+    manufacturer  VARCHAR
+    module_type   VARCHAR
+    wp_per_module DOUBLE
+    n_modules     BIGINT
+    kwp           DOUBLE            installed capacity (use for PR / normalising)
+    n_strings     BIGINT
+
+dim_tariff      (37,310 rows)       weekly feed-in price, per inverter
+    inverter_id   VARCHAR
+    week_start    DATE
+    tariff_ct_kwh DOUBLE            EUROCENT per kWh
+
+tickets_recent  (73 rows)           service tickets 2020-2026
+    component, startdate, enddate, category
+
+tickets_legacy  (11 rows)          service tickets 2019-2020 (German cols)
+    start_date, datum_ende, komponente, kwp_of_affected_components,
+    incident_duration_days, störungsart_beanstandung, dauer_in_stunden, ...
+
+EXAMPLE QUERIES (verified)
+--------------------------
+-- Worst 5 inverters by total energy (kWh)
+SELECT inverter_id, ROUND(SUM(p_ac_kw)/12.0,0) AS kwh
+FROM fact_power GROUP BY 1 ORDER BY kwh ASC LIMIT 5;
+
+-- Most common faults with approx hours lost
+SELECT fe.error_code, de.description,
+       ROUND(COUNT(*)*5/60.0,0) AS hours
+FROM fault_events fe LEFT JOIN dim_error_desc de USING(error_code)
+GROUP BY 1,2 ORDER BY hours DESC LIMIT 10;
+
+-- Monthly energy for one inverter
+SELECT date_trunc('month', ts) AS month, ROUND(SUM(p_ac_kw)/12.0,0) AS kwh
+FROM fact_power WHERE inverter_id='INV 01.03.018'
+GROUP BY 1 ORDER BY 1;
+
+-- Performance ratio per inverter (energy per kWp, daytime only)
+SELECT fp.inverter_id,
+       ROUND(SUM(fp.p_ac_kw)/12.0 / di.kwp, 0) AS kwh_per_kwp
+FROM fact_power fp
+JOIN dim_inverters di USING(inverter_id)
+JOIN fact_plant pl ON pl.ts = fp.ts
+WHERE pl.altitude_deg > 0
+GROUP BY 1 ORDER BY kwh_per_kwp ASC;

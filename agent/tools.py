@@ -37,13 +37,17 @@ def query_database(sql: str) -> str:
     Returns results as a JSON string (max 200 rows).
 
     Database tables:
-    - monitoring         → minute-level inverter power readings
-    - error_events       → error codes with timestamps per inverter
-    - error_descriptions → human-readable meaning of each error code
-    - tariffs            → monthly electricity feed-in prices (€/kWh)
-    - system_overview    → rated capacity (kWp) per inverter
-    - tickets            → maintenance service records
-    - tickets_detail     → extra detail rows for tickets (if present)
+    - fact_power     → power per inverter, LONG (ts, inverter_id, p_ac_kw, i_dc_a, u_dc_v)
+    - fact_plant     → plant-wide per timestamp (ts, irradiation_wm2, altitude_deg,
+                       dv_pct, evu_pct, plant_pac_kw, temp_module_c, ...)
+    - fault_events   → real faults only (ts, inverter_id, error_code, op_state)
+    - dim_error_desc → error_code → description (join on error_code)
+    - dim_inverters  → nameplate per inverter (inverter_id, kwp, module_type, ...)
+    - dim_tariff     → weekly feed-in price (inverter_id, week_start, tariff_ct_kwh ct/kWh)
+    - tickets_recent / tickets_legacy → maintenance records
+
+    Units: energy kWh = SUM(p_ac_kw)/12.0 (5-min data); revenue € = kWh*tariff_ct_kwh/100.
+    inverter_id looks like 'INV 01.01.001'.
 
     DuckDB supports standard SQL plus:
     - date_trunc('month', col)
