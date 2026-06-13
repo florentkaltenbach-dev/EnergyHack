@@ -1,8 +1,10 @@
 """SolarMind two-page Streamlit dashboard."""
 
+import datetime
 import os
 import sys
 
+import plotly.graph_objects as go
 import streamlit as st
 import matplotlib
 matplotlib.use("Agg")
@@ -21,6 +23,20 @@ st.set_page_config(page_title="SolarMind", page_icon="☀️", layout="wide")
 @st.cache_data(ttl=600)
 def query(sql):
     return run_query(sql)
+
+
+@st.cache_data(ttl=600)
+def get_date_bounds():
+    r = run_query(
+        "SELECT MIN(day)::DATE AS min_d, MAX(day)::DATE AS max_d FROM financial_loss"
+    ).iloc[0]
+    return r.min_d, r.max_d
+
+
+def fquery(sql, start, end):
+    """Run a SQL query with $start/$end placeholders, result cached by the filled SQL."""
+    filled = sql.replace("$start", f"'{start}'").replace("$end", f"'{end}'")
+    return query(filled)
 
 
 def seed_agent(prompt, context_key):
@@ -55,7 +71,6 @@ def render_agent_sections(sections):
         st.sidebar.warning(sections.get("message", "No data available."))
         return
 
-    # LLM narrative at the top
     if sections.get("narrative"):
         st.sidebar.info(sections["narrative"])
 
@@ -122,21 +137,85 @@ def render_agent_sections(sections):
 
 
 # ---------------------------------------------------------------------------
+# Heatmap
+# ---------------------------------------------------------------------------
+
+def render_heatmap(start_date, end_date):
+    losses = fquery("""
+        SELECT inverter_id,
+               ROUND(SUM(technical_loss_eur), 0) AS avoidable_eur
+        FROM financial_loss
+        WHERE day BETWEEN $start AND $end
+        GROUP BY inverter_id
+    """, start_date, end_date)
+
+    if losses.empty:
+        st.caption("No loss data for this period.")
+        return
+
+    losses["group"] = losses["inverter_id"].apply(lambda x: int(x.split(".")[1]))
+    losses["unit"] = losses["inverter_id"].apply(lambda x: int(x.split(".")[2]))
+
+    groups = sorted(losses["group"].unique())
+    units = sorted(losses["unit"].unique())
+
+    loss_map = {(int(r.group), int(r.unit)): r.avoidable_eur for _, r in losses.iterrows()}
+    inv_map  = {(int(r.group), int(r.unit)): r.inverter_id  for _, r in losses.iterrows()}
+
+    z, text = [], []
+    for g in groups:
+        row_z, row_text = [], []
+        for u in units:
+            val = loss_map.get((g, u))
+            inv = inv_map.get((g, u), "")
+            row_z.append(float(val) if val is not None else None)
+            row_text.append(f"{inv}<br>€{val:,.0f}" if val is not None else "")
+        z.append(row_z)
+        text.append(row_text)
+
+    fig = go.Figure(go.Heatmap(
+        z=z,
+        x=[f"{u:03d}" for u in units],
+        y=[f"G{g:02d}" for g in groups],
+        text=text,
+        hovertemplate="%{text}<extra></extra>",
+        colorscale=[[0, "#1a4731"], [0.35, "#f4a234"], [1, "#cc2222"]],
+        colorbar=dict(title=dict(text="Avoidable €", font=dict(size=11))),
+    ))
+    fig.update_layout(
+        height=300,
+        margin=dict(l=50, r=10, t=10, b=30),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(title="Unit"),
+        yaxis=dict(title="Group"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
 
-def overview():
+def overview(start_date, end_date):
     st.title("SolarMind: Fix First")
     st.caption("Losses are separated into unrestricted technical loss, plant curtailment, and weather-uncertain data.")
 
-    totals = query("""
+    totals = fquery("""
         SELECT ROUND(SUM(actual_kwh)/1000000, 2) AS production_gwh,
-               ROUND(SUM(technical_loss_eur), 0) AS avoidable_eur,
-               ROUND(SUM(curtailment_loss_eur), 0) AS curtailment_eur,
+               ROUND(SUM(technical_loss_eur), 0)         AS avoidable_eur,
+               ROUND(SUM(curtailment_loss_eur), 0)       AS curtailment_eur,
                ROUND(SUM(weather_uncertain_loss_eur), 0) AS uncertain_eur
-        FROM revenue_loss
-    """).iloc[0]
-    fault_hours = query("SELECT ROUND(COUNT(*) * 5 / 60.0, 0) AS hours FROM fault_events").iloc[0, 0]
+        FROM financial_loss
+        WHERE day BETWEEN $start AND $end
+    """, start_date, end_date).iloc[0]
+
+    fault_hours = fquery("""
+        SELECT ROUND(COUNT(*) * 5 / 60.0, 0) AS hours
+        FROM fault_events
+        WHERE ts::DATE BETWEEN $start AND $end
+    """, start_date, end_date).iloc[0, 0]
+
     cols = st.columns(5)
     cols[0].metric("Production", f"{totals.production_gwh:,.2f} GWh")
     cols[1].metric("Avoidable loss", f"€{totals.avoidable_eur:,.0f}")
@@ -144,16 +223,9 @@ def overview():
     cols[3].metric("Weather uncertain", f"€{totals.uncertain_eur:,.0f}")
     cols[4].metric("Fault hours", f"{fault_hours:,.0f}")
 
-    try:
-        hl = query("SELECT * FROM fleet_headline").iloc[0]
-        st.success(
-            f"**Fleet recoverable: €{hl.recoverable_eur_yr:,.0f}/yr** — "
-            f"technical loss only, curtailment excluded  "
-            f"({hl.first_day} – {hl.last_day}, {hl.years_covered:.1f} yr covered  |  "
-            f"{int(hl.n_inverters)} inverters  |  top-3 = {hl.top3_share_pct:.1f}% of total)"
-        )
-    except Exception:
-        pass
+    # Heatmap
+    st.subheader("Inverter loss heatmap")
+    render_heatmap(start_date, end_date)
 
     title_col, action_col = st.columns([4, 1])
     title_col.subheader("Fix First ranking")
@@ -166,7 +238,22 @@ def overview():
         ),
         width="stretch",
     )
-    ranking = query("SELECT * FROM v_fix_first ORDER BY avoidable_loss_eur DESC")
+    ranking = fquery("""
+        SELECT fl.inverter_id,
+               ROUND(SUM(fl.technical_loss_eur), 0)         AS avoidable_loss_eur,
+               ROUND(SUM(fl.technical_loss_kwh), 0)         AS avoidable_loss_kwh,
+               ROUND(SUM(fl.curtailment_loss_eur), 0)       AS curtailment_loss_eur,
+               ROUND(SUM(fl.weather_uncertain_loss_eur), 0) AS weather_uncertain_eur,
+               dr.degradation_rate_pct_yr,
+               CASE WHEN dr.degradation_rate_pct_yr <= -1 THEN 'Inspect inverter and DC strings'
+                    ELSE 'Review recurring incidents' END   AS recommended_action
+        FROM financial_loss fl
+        LEFT JOIN degradation_rates dr USING (inverter_id)
+        WHERE fl.day BETWEEN $start AND $end
+        GROUP BY fl.inverter_id, dr.degradation_rate_pct_yr
+        ORDER BY avoidable_loss_eur DESC
+    """, start_date, end_date)
+
     st.dataframe(
         ranking.rename(columns={
             "inverter_id": "Inverter", "avoidable_loss_eur": "Avoidable €",
@@ -178,10 +265,11 @@ def overview():
         column_config={"Avoidable €": st.column_config.NumberColumn(format="€ %.0f")},
     )
 
+    # Lead-time section — historical analysis, intentionally not date-filtered
     try:
         lt = query("""
-            SELECT COUNT(*)                        AS n_matched,
-                   COUNT(days_to_ticket)           AS n_with_ticket,
+            SELECT COUNT(*)                         AS n_matched,
+                   COUNT(days_to_ticket)            AS n_with_ticket,
                    ROUND(MEDIAN(days_to_ticket), 0) AS med_ticket,
                    ROUND(MEDIAN(days_to_error),  0) AS med_error
             FROM lead_time_matches
@@ -226,7 +314,7 @@ def overview():
     return None
 
 
-def detail():
+def detail(start_date, end_date):
     st.title("Inverter evidence")
     inverter_ids = query("SELECT inverter_id FROM v_fix_first ORDER BY avoidable_loss_eur DESC")["inverter_id"].tolist()
     requested_inverter = st.query_params.get("inverter", DEMO_INV)
@@ -241,13 +329,31 @@ def detail():
         on_change=update_inverter_route,
     )
 
-    summary = query(f"SELECT * FROM v_fix_first WHERE inverter_id = '{inv}'").iloc[0]
-    cols = st.columns(4)
-    cols[0].metric("Avoidable loss", f"€{summary.avoidable_loss_eur:,.0f}")
-    cols[1].metric("Lost energy", f"{summary.avoidable_loss_kwh:,.0f} kWh")
-    cols[2].metric("Degradation trend", f"{summary.degradation_rate_pct_yr:,.2f}%/yr")
-    cols[3].metric("Curtailment loss", f"€{summary.curtailment_loss_eur:,.0f}")
-    st.info(summary.recommended_action)
+    # Time-filtered KPIs for this inverter
+    summary_df = fquery(f"""
+        SELECT ROUND(SUM(fl.technical_loss_eur), 0)         AS avoidable_loss_eur,
+               ROUND(SUM(fl.technical_loss_kwh), 0)         AS avoidable_loss_kwh,
+               ROUND(SUM(fl.curtailment_loss_eur), 0)       AS curtailment_loss_eur,
+               dr.degradation_rate_pct_yr,
+               CASE WHEN dr.degradation_rate_pct_yr <= -1 THEN 'Inspect inverter and DC strings'
+                    ELSE 'Review recurring incidents' END   AS recommended_action
+        FROM financial_loss fl
+        LEFT JOIN degradation_rates dr ON dr.inverter_id = fl.inverter_id
+        WHERE fl.inverter_id = '{inv}'
+          AND fl.day BETWEEN $start AND $end
+        GROUP BY dr.degradation_rate_pct_yr
+    """, start_date, end_date)
+
+    if not summary_df.empty:
+        summary = summary_df.iloc[0]
+        deg_str = f"{summary.degradation_rate_pct_yr:,.2f}%/yr" if summary.degradation_rate_pct_yr is not None else "n/a"
+        cols = st.columns(4)
+        cols[0].metric("Avoidable loss", f"€{summary.avoidable_loss_eur:,.0f}")
+        cols[1].metric("Lost energy", f"{summary.avoidable_loss_kwh:,.0f} kWh")
+        cols[2].metric("Degradation trend", deg_str)
+        cols[3].metric("Curtailment loss", f"€{summary.curtailment_loss_eur:,.0f}")
+        st.info(summary.recommended_action)
+
     st.button(
         "Ask about this inverter",
         on_click=seed_agent,
@@ -277,14 +383,15 @@ def detail():
     left, right = st.columns(2)
     with left:
         st.subheader("Fault-code evidence")
-        faults = query(f"""
+        faults = fquery(f"""
             SELECT COALESCE(de.hex, CAST(fe.error_code AS VARCHAR)) AS code,
-                   COALESCE(de.description, 'Unknown code') AS description,
-                   ROUND(COUNT(*) * 5 / 60.0, 1) AS hours
+                   COALESCE(de.description, 'Unknown code')         AS description,
+                   ROUND(COUNT(*) * 5 / 60.0, 1)                   AS hours
             FROM fault_events fe LEFT JOIN dim_error_desc de USING (error_code)
             WHERE fe.inverter_id = '{inv}'
+              AND fe.ts::DATE BETWEEN $start AND $end
             GROUP BY 1, 2 ORDER BY hours DESC LIMIT 10
-        """)
+        """, start_date, end_date)
         st.dataframe(faults, hide_index=True, width="stretch")
     with right:
         st.subheader("Service tickets")
@@ -308,12 +415,22 @@ def detail():
         st.subheader("Evidence-backed work order")
         st.dataframe(work_order, hide_index=True, width="stretch")
 
-    losses = query(f"""
-        SELECT yr, technical_loss_eur, curtailment_loss_eur, weather_uncertain_loss_eur
-        FROM revenue_loss WHERE inverter_id = '{inv}' ORDER BY yr
-    """)
+    losses = fquery(f"""
+        SELECT year(day) AS yr,
+               ROUND(SUM(technical_loss_eur), 2)         AS technical_loss_eur,
+               ROUND(SUM(curtailment_loss_eur), 2)       AS curtailment_loss_eur,
+               ROUND(SUM(weather_uncertain_loss_eur), 2) AS weather_uncertain_loss_eur
+        FROM financial_loss
+        WHERE inverter_id = '{inv}'
+          AND day BETWEEN $start AND $end
+        GROUP BY yr ORDER BY yr
+    """, start_date, end_date)
     st.subheader("Annual loss attribution")
-    st.bar_chart(losses.set_index("yr"), y=["technical_loss_eur", "curtailment_loss_eur", "weather_uncertain_loss_eur"])
+    if not losses.empty:
+        st.bar_chart(
+            losses.set_index("yr"),
+            y=["technical_loss_eur", "curtailment_loss_eur", "weather_uncertain_loss_eur"],
+        )
     return inv
 
 
@@ -333,7 +450,6 @@ def agent_rail(page, inverter_id=None):
     histories = st.session_state.setdefault("agent_histories", {})
     history = histories.setdefault(context_key, [])
 
-    # Auto-submit seeded questions immediately (no second click needed)
     if st.session_state.get("agent_seed_context") == context_key:
         auto_question = st.session_state.pop("agent_seed")
         st.session_state.pop("agent_seed_context", None)
@@ -342,22 +458,16 @@ def agent_rail(page, inverter_id=None):
         history.append({"question": auto_question, "sections": sections})
         st.rerun()
 
-    # Render history (newest last, max 3 exchanges shown)
     for item in history[-3:]:
         st.sidebar.markdown(f"**You:** {item['question']}")
-        # Support both new structured format and any old string-answer format
         if "sections" in item:
             render_agent_sections(item["sections"])
         elif "answer" in item:
             st.sidebar.markdown(item["answer"])
         st.sidebar.divider()
 
-    # Manual question form
     with st.sidebar.form("agent_rail_form", clear_on_submit=True):
-        question = st.text_input(
-            "Ask why",
-            placeholder="Why should I fix this first?",
-        )
+        question = st.text_input("Ask why", placeholder="Why should I fix this first?")
         submitted = st.form_submit_button("Ask SolarMind", width="stretch")
 
     if submitted and question.strip():
@@ -371,6 +481,92 @@ def agent_rail(page, inverter_id=None):
 # Routing
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Sidebar – time range selector
+# ---------------------------------------------------------------------------
+_PRESET_LABELS = ["7 days", "30 days", "90 days", "12 months", "All data", "Custom"]
+
+if "period_key" not in st.session_state:
+    st.session_state["period_key"] = "30 days"
+
+
+def _pick_hotspot(hs, he):
+    st.session_state["period_key"] = "Custom"
+    st.session_state["date_range_slider"] = (hs, he)
+
+
+try:
+    min_d, max_d = get_date_bounds()
+
+    if "date_range_slider" not in st.session_state:
+        st.session_state["date_range_slider"] = (
+            max(min_d, max_d - datetime.timedelta(days=30)), max_d
+        )
+
+    preset = st.sidebar.radio(
+        "Period",
+        _PRESET_LABELS,
+        key="period_key",
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    if preset == "Custom":
+        date_range = st.sidebar.slider(
+            "Date range",
+            min_value=min_d,
+            max_value=max_d,
+            format="YYYY-MM-DD",
+            key="date_range_slider",
+        )
+        start_date, end_date = date_range
+    else:
+        _delta = {"7 days": 7, "30 days": 30, "90 days": 90, "12 months": 365}
+        start_date = (
+            min_d if preset == "All data"
+            else max(min_d, max_d - datetime.timedelta(days=_delta[preset]))
+        )
+        end_date = max_d
+
+    st.sidebar.caption(f"Showing: {start_date} – {end_date}")
+
+    _hotspots = query("""
+        SELECT DATE_TRUNC('month', day)::DATE AS period_start,
+               ROUND(SUM(technical_loss_eur), 0) AS loss_eur,
+               COUNT(DISTINCT CASE WHEN technical_loss_eur > 5 THEN inverter_id END) AS n_aff
+        FROM financial_loss
+        WHERE technical_loss_eur > 0
+        GROUP BY 1
+        ORDER BY loss_eur DESC
+        LIMIT 5
+    """)
+    if not _hotspots.empty:
+        st.sidebar.caption("High-loss months — click to jump:")
+        for _, _r in _hotspots.iterrows():
+            _ps = _r.period_start
+            if hasattr(_ps, "date"):
+                _ps = _ps.date()
+            _pe = (
+                datetime.date(_ps.year + 1, 1, 1) - datetime.timedelta(days=1)
+                if _ps.month == 12
+                else datetime.date(_ps.year, _ps.month + 1, 1) - datetime.timedelta(days=1)
+            )
+            _pe = min(_pe, max_d)
+            _label = f"{_ps.strftime('%b %Y')} · €{int(_r.loss_eur):,} · {int(_r.n_aff)} inv"
+            st.sidebar.button(
+                _label,
+                key=f"hs_{_ps}",
+                on_click=_pick_hotspot,
+                args=(_ps, _pe),
+            )
+
+except Exception:
+    start_date = datetime.date(2017, 1, 1)
+    end_date = datetime.date(2026, 12, 31)
+
+st.sidebar.divider()
+
+# --- Page navigation ---
 pages = ["Overview", "Inverter detail"]
 requested_page = st.query_params.get("page", "Overview")
 page_index = pages.index(requested_page) if requested_page in pages else 0
@@ -383,5 +579,5 @@ page = st.sidebar.radio(
     key="selected_page",
     on_change=update_page_route,
 )
-selected_inverter = overview() if page == "Overview" else detail()
+selected_inverter = overview(start_date, end_date) if page == "Overview" else detail(start_date, end_date)
 agent_rail(page, selected_inverter)

@@ -171,12 +171,14 @@ def generate_narrative(state):
     if not sections or sections.get("mode") == "error":
         return {}
 
+    question = state.get("question", "")
+
     try:
         from dotenv import load_dotenv
         load_dotenv()
         from langchain_groq import ChatGroq
 
-        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.3, max_tokens=120)
+        llm = ChatGroq(model="llama-3.3-70b-versatile", temperature=0.7, max_tokens=200)
 
         if sections["mode"] == "inverter":
             inv = sections["inverter_id"]
@@ -186,7 +188,7 @@ def generate_narrative(state):
             deg = sections["degradation"]
             ev = sections.get("evidence", {})
 
-            lines = [
+            context_lines = [
                 f"Solar inverter {inv}, ranked #{rank} of {total}.",
                 f"Avoidable loss: €{fin['avoidable_eur']:,.0f} ({fin['avoidable_kwh']:,.0f} kWh).",
                 f"Degradation: {deg['rate_pct_yr']:.3f}%/yr "
@@ -194,17 +196,15 @@ def generate_narrative(state):
                 f"n={deg['months']} months, {deg['confidence']}).",
             ]
             if ev and ev.get("category"):
-                lines.append(
-                    f"Ticket: '{ev['category']}' open {ev['days_open']:.0f} days."
-                )
-                lines.append(
-                    f"Primary fault: {ev['fault_code']} — {ev['fault_desc'][:80]}."
-                )
-            lines.append(
-                "Write exactly 2 sentences explaining the priority finding. "
-                "Be specific about root cause and financial impact. No generic advice."
+                context_lines.append(f"Ticket: '{ev['category']}' open {ev['days_open']:.0f} days.")
+                context_lines.append(f"Primary fault: {ev['fault_code']} — {ev['fault_desc'][:80]}.")
+            context = "\n".join(context_lines)
+            prompt = (
+                f"{context}\n\n"
+                f"User question: {question}\n\n"
+                "Answer in 2–3 sentences using the data above. Be specific about root cause and "
+                "financial impact. No generic advice."
             )
-            prompt = "\n".join(lines)
 
         else:
             rows = sections.get("rows", [])
@@ -215,10 +215,14 @@ def generate_narrative(state):
                 f"{r['inverter_id']} €{r['avoidable_loss_eur']:,.0f} ({r['degradation_rate_pct_yr']:.1f}%/yr)"
                 for r in top3
             )
-            prompt = (
+            context = (
                 f"Solar fleet Fix First ranking. Fleet total: €{fleet_total:,.0f} avoidable loss.\n"
-                f"Top 3: {summary}. Top-3 share: {top3_share:.1f}%.\n"
-                "Write exactly 2 sentences: the top opportunity and the dominant pattern. Be specific."
+                f"Top 3: {summary}. Top-3 share: {top3_share:.1f}%."
+            )
+            prompt = (
+                f"{context}\n\n"
+                f"User question: {question}\n\n"
+                "Answer in 2–3 sentences using the data above. Be specific. No generic advice."
             )
 
         narrative = llm.invoke(prompt).content.strip()

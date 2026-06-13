@@ -1,0 +1,87 @@
+[
+  {
+    "id": 1,
+    "caption": "65 inverters. 9.4 years of data. €176,956 in avoidable losses hiding in plain sight.",
+    "action": "load",
+    "targetSelector": "[data-testid=\"stAppViewContainer\"]",
+    "dwellMs": 3500
+  },
+  {
+    "id": 2,
+    "caption": "Plant-level KPIs look fine — but inverter-level losses are invisible until now.",
+    "action": "hover",
+    "targetSelector": "[data-testid=\"stMetric\"]:nth-of-type(2)",
+    "dwellMs": 3500
+  },
+  {
+    "id": 3,
+    "caption": "The heatmap surfaces every underperforming unit. Red = where money is leaking.",
+    "action": "hover",
+    "targetSelector": "[data-testid=\"stPlotlyChart\"]",
+    "dwellMs": 4000
+  },
+  {
+    "id": 4,
+    "caption": "Fix First ranking: inverters sorted by avoidable loss, curtailment already stripped out.",
+    "action": "scroll",
+    "targetSelector": "[data-testid=\"stDataFrame\"]",
+    "dwellMs": 4000
+  },
+  {
+    "id": 5,
+    "caption": "Early-warning system: SolarMind flags problems 92 days before a service ticket is raised.",
+    "action": "scroll",
+    "targetSelector": "[data-testid=\"stMetric\"]:last-of-type",
+    "dwellMs": 4000
+  },
+  {
+    "id": 6,
+    "caption": "Drilling into the worst inverter: INV 01.07.045.",
+    "action": "click",
+    "targetSelector": "text=Inverter detail",
+    "dwellMs": 3500
+  },
+  {
+    "id": 7,
+    "caption": "€5,309 avoidable loss. Degradation: −2.89 %/yr. Curtailment excluded.",
+    "action": "hover",
+    "targetSelector": "[data-testid=\"stMetric\"]:nth-of-type(1)",
+    "dwellMs": 4500
+  },
+  {
+    "id": 8,
+    "caption": "SolarMind would have flagged the −6.8 pp deviation in July 2020 — 3 months before the ticket.",
+    "action": "hover",
+    "targetSelector": "[data-testid=\"stAlert\"]:last-of-type",
+    "dwellMs": 5000
+  },
+  {
+    "id": 9,
+    "caption": "Degradation trend vs own healthy early-life baseline — nine years of slow decline, now visible.",
+    "action": "scroll",
+    "targetSelector": "[data-testid=\"stVegaLiteChart\"]:first-of-type",
+    "dwellMs": 4500
+  },
+  {
+    "id": 10,
+    "caption": "Fault codes + open service ticket confirm the root cause: Strangausfall, open 1,736 days.",
+    "action": "scroll",
+    "targetSelector": "[data-testid=\"stDataFrame\"]:first-of-type",
+    "dwellMs": 4000
+  },
+  {
+    "id": 11,
+    "caption": "Annual loss attribution: technical loss vs curtailment vs weather-uncertain, year by year.",
+    "action": "scroll",
+    "targetSelector": "[data-testid=\"stVegaLiteChart\"]:last-of-type",
+    "dwellMs": 4000
+  },
+  {
+    "id": 12,
+    "caption": "SolarMind: surface it, price it, prove it's not curtailment, act on it.",
+    "action": "scroll",
+    "targetSelector": "[data-testid=\"stAppViewContainer\"]",
+    "scrollY": 0,
+    "dwellMs": 4000
+  }
+]
