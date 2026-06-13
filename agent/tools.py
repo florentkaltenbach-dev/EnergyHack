@@ -3,6 +3,25 @@
 from db.db import run_query
 
 
+def get_fleet_rank(inverter_id):
+    """Return this inverter's rank, share, and fleet totals from v_fix_first."""
+    safe_id = inverter_id.replace("'", "''")
+    return run_query(f"""
+        WITH ranked AS (
+            SELECT inverter_id,
+                   avoidable_loss_eur,
+                   ROW_NUMBER() OVER (ORDER BY avoidable_loss_eur DESC) AS rank,
+                   COUNT(*)         OVER ()                             AS total,
+                   SUM(avoidable_loss_eur) OVER ()                     AS fleet_total_eur
+            FROM v_fix_first
+        )
+        SELECT rank, total, avoidable_loss_eur, fleet_total_eur,
+               ROUND(100.0 * avoidable_loss_eur / fleet_total_eur, 1) AS fleet_share_pct
+        FROM ranked
+        WHERE inverter_id = '{safe_id}'
+    """)
+
+
 def get_fix_first(limit=5):
     """Return the validated financial ranking without recalculating figures."""
     limit = max(1, min(int(limit), 20))

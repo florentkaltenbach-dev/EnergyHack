@@ -144,9 +144,19 @@ def plot_timeline(example):
     if ticket_date and d_ticket is not None:
         events.append((d_ticket, "#e74c3c", f"Ticket opened\n+{d_ticket} d  ({ticket_date})"))
 
-    for x, color, label in events:
+    # Alternate labels above/below the spine so close events never collide
+    label_above = [0.82, 0.82]   # y for above-spine labels
+    label_below = 0.16            # y for below-spine label (middle event)
+    for i, (x, color, label) in enumerate(events):
         ax.scatter(x, 0.5, s=160, color=color, zorder=3, edgecolors="white", linewidths=1.5)
-        ax.text(x, 0.76, label, ha="center", va="bottom", fontsize=8.5,
+        if i == 1 and len(events) == 3:
+            # Middle event goes below the spine to avoid collision with neighbours
+            y_text, va = label_below, "top"
+            ax.plot([x, x], [0.5, y_text + 0.04], color=color, lw=0.8, alpha=0.5, zorder=2)
+        else:
+            y_text, va = 0.82, "bottom"
+            ax.plot([x, x], [0.5, y_text - 0.04], color=color, lw=0.8, alpha=0.5, zorder=2)
+        ax.text(x, y_text, label, ha="center", va=va, fontsize=8.5,
                 color="#333333", linespacing=1.4)
 
     # Lead-time brace

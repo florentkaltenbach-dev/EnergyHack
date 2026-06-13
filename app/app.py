@@ -24,7 +24,6 @@ def query(sql):
 
 
 def seed_agent(prompt, context_key):
-    st.session_state["agent_enabled"] = True
     st.session_state["agent_seed"] = prompt
     st.session_state["agent_seed_context"] = context_key
 
@@ -42,6 +41,89 @@ def update_inverter_route():
     st.query_params["inverter"] = inverter_id
     st.session_state["route_inverter"] = inverter_id
 
+
+# ---------------------------------------------------------------------------
+# Agent section renderer
+# ---------------------------------------------------------------------------
+
+def render_agent_sections(sections):
+    """Render a structured sections dict as sidebar expanders."""
+    if not sections:
+        return
+    mode = sections.get("mode")
+    if mode == "error":
+        st.sidebar.warning(sections.get("message", "No data available."))
+        return
+
+    # LLM narrative at the top
+    if sections.get("narrative"):
+        st.sidebar.info(sections["narrative"])
+
+    if mode == "inverter":
+        rank = sections.get("rank")
+        total = sections.get("total")
+        share = sections.get("fleet_share_pct")
+        fleet_total = sections.get("fleet_total_eur")
+        if rank:
+            st.sidebar.caption(
+                f"Rank **#{rank}** of {total} · {share:.1f}% of fleet loss · "
+                f"€{fleet_total:,.0f} fleet total"
+            )
+
+        fin = sections["financial"]
+        with st.sidebar.expander("Financial loss", expanded=True):
+            st.markdown(
+                f"**Avoidable:** €{fin['avoidable_eur']:,.0f} · {fin['avoidable_kwh']:,.0f} kWh"
+            )
+            st.caption(f"Curtailment excluded: €{fin['curtailment_eur']:,.0f}")
+            if fin["uncertain_eur"]:
+                st.caption(f"Weather-uncertain: €{fin['uncertain_eur']:,.0f}")
+
+        deg = sections["degradation"]
+        ci_flag = "🔴 low confidence" if deg["low_confidence"] else "🟢 supported trend"
+        with st.sidebar.expander(
+            f"Degradation {deg['rate_pct_yr']:.2f}%/yr · {ci_flag}", expanded=False
+        ):
+            st.markdown(f"CI: {deg['ci_low']:.3f} to {deg['ci_high']:.3f} %/yr")
+            st.caption(f"n={deg['months']} summer months · {deg['confidence']}")
+
+        ev = sections.get("evidence", {})
+        if ev and ev.get("category"):
+            days = ev["days_open"]
+            with st.sidebar.expander(
+                f"Ticket: {ev['category']} · {days:.0f} days open", expanded=False
+            ):
+                st.caption(f"Opened: {ev['opened_on']}")
+                if ev.get("closed_on") and ev["closed_on"] not in ("None", ""):
+                    st.caption(f"Closed: {ev['closed_on']}")
+                if ev.get("fault_code"):
+                    st.markdown(f"**Fault {ev['fault_code']}:** {ev['fault_desc'][:100]}")
+
+        st.sidebar.success(f"**Action:** {sections['recommendation']}")
+
+    elif mode == "fleet":
+        for row in sections.get("rows", []):
+            with st.sidebar.expander(
+                f"#{row['rank']} {row['inverter_id']} · €{row['avoidable_loss_eur']:,.0f}",
+                expanded=(row["rank"] == 1),
+            ):
+                st.markdown(f"Degradation: **{row['degradation_rate_pct_yr']:.2f}%/yr**")
+                st.caption(
+                    f"{row['avoidable_loss_kwh']:,.0f} kWh lost · "
+                    f"€{row['curtailment_loss_eur']:,.0f} curtailment"
+                )
+                st.caption(row["recommended_action"])
+
+        ev = sections.get("evidence", {})
+        if ev and ev.get("category"):
+            st.sidebar.caption(
+                f"Top-item evidence: {ev['category']} · fault {ev['fault_code']}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
 
 def overview():
     st.title("SolarMind: Fix First")
@@ -62,7 +144,6 @@ def overview():
     cols[3].metric("Weather uncertain", f"€{totals.uncertain_eur:,.0f}")
     cols[4].metric("Fault hours", f"{fault_hours:,.0f}")
 
-    # AI-84: Fleet recoverable headline (annualised, curtailment excluded)
     try:
         hl = query("SELECT * FROM fleet_headline").iloc[0]
         st.success(
@@ -73,6 +154,7 @@ def overview():
         )
     except Exception:
         pass
+
     title_col, action_col = st.columns([4, 1])
     title_col.subheader("Fix First ranking")
     action_col.button(
@@ -96,7 +178,6 @@ def overview():
         column_config={"Avoidable €": st.column_config.NumberColumn(format="€ %.0f")},
     )
 
-    # AI-85: Lead-time vs ticket
     try:
         lt = query("""
             SELECT COUNT(*)                        AS n_matched,
@@ -236,6 +317,10 @@ def detail():
     return inv
 
 
+# ---------------------------------------------------------------------------
+# Agent rail
+# ---------------------------------------------------------------------------
+
 def agent_rail(page, inverter_id=None):
     st.sidebar.divider()
     enabled = st.sidebar.toggle("Decision agent", value=True, key="agent_enabled")
@@ -247,31 +332,44 @@ def agent_rail(page, inverter_id=None):
     context_key = f"{page}:{inverter_id or 'fleet'}"
     histories = st.session_state.setdefault("agent_histories", {})
     history = histories.setdefault(context_key, [])
-    for item in history[-4:]:
-        st.sidebar.markdown(f"**You:** {item['question']}")
-        st.sidebar.markdown(item["answer"])
 
-    prompt_key = "agent_prompt_" + context_key.replace(" ", "_").replace(".", "_")
+    # Auto-submit seeded questions immediately (no second click needed)
     if st.session_state.get("agent_seed_context") == context_key:
-        st.session_state[prompt_key] = st.session_state.pop("agent_seed")
+        auto_question = st.session_state.pop("agent_seed")
         st.session_state.pop("agent_seed_context", None)
+        with st.sidebar.spinner("Analysing…"):
+            sections = ask(auto_question, page=page, inverter_id=inverter_id)
+        history.append({"question": auto_question, "sections": sections})
+        st.rerun()
 
+    # Render history (newest last, max 3 exchanges shown)
+    for item in history[-3:]:
+        st.sidebar.markdown(f"**You:** {item['question']}")
+        # Support both new structured format and any old string-answer format
+        if "sections" in item:
+            render_agent_sections(item["sections"])
+        elif "answer" in item:
+            st.sidebar.markdown(item["answer"])
+        st.sidebar.divider()
+
+    # Manual question form
     with st.sidebar.form("agent_rail_form", clear_on_submit=True):
         question = st.text_input(
             "Ask why",
             placeholder="Why should I fix this first?",
-            key=prompt_key,
         )
         submitted = st.form_submit_button("Ask SolarMind", width="stretch")
+
     if submitted and question.strip():
-        answer = ask(
-            question.strip(),
-            page=page,
-            inverter_id=inverter_id,
-        )
-        history.append({"question": question.strip(), "answer": answer})
+        with st.sidebar.spinner("Analysing…"):
+            sections = ask(question.strip(), page=page, inverter_id=inverter_id)
+        history.append({"question": question.strip(), "sections": sections})
         st.rerun()
 
+
+# ---------------------------------------------------------------------------
+# Routing
+# ---------------------------------------------------------------------------
 
 pages = ["Overview", "Inverter detail"]
 requested_page = st.query_params.get("page", "Overview")
