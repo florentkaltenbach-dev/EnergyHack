@@ -20,4 +20,14 @@ for row in top.itertuples():
     assert f"EUR {row.avoidable_loss_eur:,.0f}" in answer
 
 print(answer)
+
+context_answer = ask(
+    "Why this inverter?",
+    page="Inverter detail",
+    inverter_id="INV 01.07.045",
+)
+assert "Context: Inverter detail / INV 01.07.045" in context_answer
+assert "EUR 5,309" in context_answer
+assert "95% CI" in context_answer
+print("\nContext-aware answer:\n" + context_answer)
 print("M5/M6 verification passed")

@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from db.db import run_query
 from analysis.leadtime import plot_timeline
+from agent.agent import ask
 
 DEMO_INV = "INV 01.07.045"  # Demo story: Strangausfall, 5yr open ticket, €5,309 technical loss
 
@@ -52,7 +53,6 @@ def overview():
         )
     except Exception:
         pass
-
     st.subheader("Fix First ranking")
     ranking = query("SELECT * FROM v_fix_first ORDER BY avoidable_loss_eur DESC")
     st.dataframe(
@@ -112,6 +112,7 @@ def overview():
             st.pyplot(fig, clear_figure=True)
     except Exception:
         pass
+    return None
 
 
 def detail():
@@ -185,7 +186,40 @@ def detail():
     """)
     st.subheader("Annual loss attribution")
     st.bar_chart(losses.set_index("yr"), y=["technical_loss_eur", "curtailment_loss_eur", "weather_uncertain_loss_eur"])
+    return inv
+
+
+def agent_rail(page, inverter_id=None):
+    st.sidebar.divider()
+    enabled = st.sidebar.toggle("Decision agent", value=True)
+    if not enabled:
+        return
+
+    context = inverter_id if inverter_id else "fleet ranking"
+    st.sidebar.caption(f"Context: {page} / {context}")
+    context_key = f"{page}:{inverter_id or 'fleet'}"
+    histories = st.session_state.setdefault("agent_histories", {})
+    history = histories.setdefault(context_key, [])
+    for item in history[-4:]:
+        st.sidebar.markdown(f"**You:** {item['question']}")
+        st.sidebar.markdown(item["answer"])
+
+    with st.sidebar.form("agent_rail_form", clear_on_submit=True):
+        question = st.text_input(
+            "Ask why",
+            placeholder="Why should I fix this first?",
+        )
+        submitted = st.form_submit_button("Ask SolarMind", width="stretch")
+    if submitted and question.strip():
+        answer = ask(
+            question.strip(),
+            page=page,
+            inverter_id=inverter_id,
+        )
+        history.append({"question": question.strip(), "answer": answer})
+        st.rerun()
 
 
 page = st.sidebar.radio("Page", ["Overview", "Inverter detail"])
-overview() if page == "Overview" else detail()
+selected_inverter = overview() if page == "Overview" else detail()
+agent_rail(page, selected_inverter)

@@ -25,3 +25,17 @@ def get_work_order(inverter_id):
         ORDER BY loss_while_open_eur DESC, opened_on
         LIMIT 1
     """)
+
+
+def get_inverter_decision(inverter_id):
+    """Return one inverter's validated ranking and uncertainty values."""
+    safe_id = inverter_id.replace("'", "''")
+    return run_query(f"""
+        SELECT inverter_id, avoidable_loss_eur, avoidable_loss_kwh,
+               curtailment_loss_eur, weather_uncertain_eur,
+               degradation_rate_pct_yr, ci_low_pct_yr, ci_high_pct_yr,
+               sample_months, low_confidence, confidence_reason,
+               recommended_action
+        FROM v_fix_first_with_uncertainty
+        WHERE inverter_id = '{safe_id}'
+    """)
