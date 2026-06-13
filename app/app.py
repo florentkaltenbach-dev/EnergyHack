@@ -23,6 +23,12 @@ def query(sql):
     return run_query(sql)
 
 
+def seed_agent(prompt, context_key):
+    st.session_state["agent_enabled"] = True
+    st.session_state["agent_seed"] = prompt
+    st.session_state["agent_seed_context"] = context_key
+
+
 def overview():
     st.title("SolarMind: Fix First")
     st.caption("Losses are separated into unrestricted technical loss, plant curtailment, and weather-uncertain data.")
@@ -53,7 +59,17 @@ def overview():
         )
     except Exception:
         pass
-    st.subheader("Fix First ranking")
+    title_col, action_col = st.columns([4, 1])
+    title_col.subheader("Fix First ranking")
+    action_col.button(
+        "Explain this ranking",
+        on_click=seed_agent,
+        args=(
+            "Explain why the top three inverters rank first and separate technical loss from curtailment.",
+            "Overview:fleet",
+        ),
+        width="stretch",
+    )
     ranking = query("SELECT * FROM v_fix_first ORDER BY avoidable_loss_eur DESC")
     st.dataframe(
         ranking.rename(columns={
@@ -128,6 +144,14 @@ def detail():
     cols[2].metric("Degradation trend", f"{summary.degradation_rate_pct_yr:,.2f}%/yr")
     cols[3].metric("Curtailment loss", f"€{summary.curtailment_loss_eur:,.0f}")
     st.info(summary.recommended_action)
+    st.button(
+        "Ask about this inverter",
+        on_click=seed_agent,
+        args=(
+            f"Explain why {inv} needs attention, using its loss, degradation uncertainty, tickets, and faults.",
+            f"Inverter detail:{inv}",
+        ),
+    )
 
     if inv == DEMO_INV:
         st.warning(
@@ -191,7 +215,7 @@ def detail():
 
 def agent_rail(page, inverter_id=None):
     st.sidebar.divider()
-    enabled = st.sidebar.toggle("Decision agent", value=True)
+    enabled = st.sidebar.toggle("Decision agent", value=True, key="agent_enabled")
     if not enabled:
         return
 
@@ -204,10 +228,16 @@ def agent_rail(page, inverter_id=None):
         st.sidebar.markdown(f"**You:** {item['question']}")
         st.sidebar.markdown(item["answer"])
 
+    prompt_key = "agent_prompt_" + context_key.replace(" ", "_").replace(".", "_")
+    if st.session_state.get("agent_seed_context") == context_key:
+        st.session_state[prompt_key] = st.session_state.pop("agent_seed")
+        st.session_state.pop("agent_seed_context", None)
+
     with st.sidebar.form("agent_rail_form", clear_on_submit=True):
         question = st.text_input(
             "Ask why",
             placeholder="Why should I fix this first?",
+            key=prompt_key,
         )
         submitted = st.form_submit_button("Ask SolarMind", width="stretch")
     if submitted and question.strip():
