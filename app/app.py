@@ -30,12 +30,12 @@ with st.sidebar:
     st.divider()
     st.markdown("**Example questions:**")
     examples = [
-        "Which inverter had the most downtime in 2022?",
-        "How much revenue did we lose from faults in summer 2021?",
-        "Show a chart of monthly production for inverter 5 in 2020.",
-        "Inverter 12 just triggered error 450 — what should I do?",
-        "Which month had the highest feed-in tariff?",
-        "Compare the worst 5 performing inverters last year.",
+        "INV 01.01.004 just triggered error 0A0013 (Isolationsfehler) — what should my engineer do right now?",
+        "Show me the monthly Performance Ratio trend for INV 01.01.004 over the last 2 years.",
+        "Which 5 inverters have the worst performance ratio?",
+        "Was the low production on 2024-04-07 a fault or curtailment?",
+        "Which inverters should I send a technician to this week?",
+        "What are the top 3 error codes by number of occurrences?",
     ]
     for ex in examples:
         if st.button(ex, use_container_width=True, key=ex):

@@ -219,17 +219,93 @@ def load_all_data():
         print(f"  WARN dim_tariff skipped: {e}")
 
     # ── tickets: two sheets, different schemas → two tables (names cleaned) ────
+    # The legacy sheet's headers are German with umlauts/ß (störungsart, ausmaß).
+    # Transliterate to ASCII, then map the cryptic ones to clean English names so
+    # the text-to-SQL agent never has to type 'ö'/'ß' or decode German.
     print("Building tickets ...")
+    translit = str.maketrans({
+        "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
+        "Ä": "Ae", "Ö": "Oe", "Ü": "Ue",
+    })
+
+    def clean_col(c: str) -> str:
+        c = str(c).translate(translit)
+        return re.sub(r"\W+", "_", c).strip("_").lower()
+
+    ticket_renames = {
+        "uhrzeit_beginn":                     "start_time",
+        "datum_ende":                         "end_date",
+        "uhrzeit_ende":                       "end_time",
+        "komponente":                         "component",
+        "anzahl_ausmass_betroffener_komponente": "affected_components_count",
+        "stoerungsart_beanstandung":          "fault_type",
+        "dauer_in_stunden":                   "duration_hours",
+        "dauer_in_tagen":                     "duration_days",
+    }
+
     xl = pd.ExcelFile(os.path.join(DATA, "Additional_Data", "Tickets.xlsx"))
     for sheet, tbl in [("2020-2026", "tickets_recent"), ("2019-2020", "tickets_legacy")]:
         if sheet not in xl.sheet_names:
             continue
         t = pd.read_excel(xl, sheet_name=sheet)
-        t.columns = [re.sub(r"\W+", "_", str(c)).strip("_").lower() for c in t.columns]
+        t.columns = [clean_col(c) for c in t.columns]
+        t = t.rename(columns=ticket_renames)
         con.register("_tk", t)
         con.execute(f"DROP TABLE IF EXISTS {tbl}")
         con.execute(f"CREATE TABLE {tbl} AS SELECT * FROM _tk")
         print(f"  {tbl}: {len(t):,} rows")
+
+    # ── analytics VIEWS: Performance Ratio + inverter summary ─────────────────
+    # PR = (energy_kWh / kWp) / irradiation_kWh_per_m²  (plant GHI as the irradiation
+    # proxy). These power the demo's ranking/trend/PR questions with one simple SELECT,
+    # so the text-to-SQL agent never has to hand-write the multi-CTE maths.
+    print("Building analytics views (PR, summary) ...")
+    con.execute("""
+        CREATE OR REPLACE VIEW v_inverter_month_pr AS
+        WITH e AS (
+          SELECT inverter_id, date_trunc('month', ts) AS month, SUM(p_ac_kw)/12.0 AS kwh
+          FROM fact_power GROUP BY 1,2),
+        h AS (
+          SELECT date_trunc('month', ts) AS month, SUM(irradiation_wm2)/12.0/1000.0 AS sun_kwh_m2
+          FROM fact_plant GROUP BY 1)
+        SELECT e.inverter_id, e.month, ROUND(e.kwh,1) AS kwh, i.kwp,
+               ROUND(h.sun_kwh_m2,1) AS sun_kwh_m2,
+               ROUND((e.kwh/NULLIF(i.kwp,0))/NULLIF(h.sun_kwh_m2,0),3) AS pr
+        FROM e JOIN h USING(month)
+        JOIN dim_inverters i ON i.inverter_id = e.inverter_id
+    """)
+    con.execute("""
+        CREATE OR REPLACE VIEW v_inverter_day_pr AS
+        WITH e AS (
+          SELECT inverter_id, date_trunc('day', ts) AS day, SUM(p_ac_kw)/12.0 AS kwh
+          FROM fact_power GROUP BY 1,2),
+        h AS (
+          SELECT date_trunc('day', ts) AS day, SUM(irradiation_wm2)/12.0/1000.0 AS sun_kwh_m2
+          FROM fact_plant GROUP BY 1)
+        SELECT e.inverter_id, e.day, ROUND(e.kwh,1) AS kwh, i.kwp,
+               ROUND(h.sun_kwh_m2,2) AS sun_kwh_m2,
+               ROUND((e.kwh/NULLIF(i.kwp,0))/NULLIF(h.sun_kwh_m2,0),3) AS pr
+        FROM e JOIN h USING(day)
+        JOIN dim_inverters i ON i.inverter_id = e.inverter_id
+        WHERE h.sun_kwh_m2 > 0.5
+    """)
+    con.execute("""
+        CREATE OR REPLACE VIEW v_inverter_summary AS
+        WITH e AS (SELECT inverter_id, SUM(p_ac_kw)/12.0 AS lifetime_kwh FROM fact_power GROUP BY 1),
+        f AS (SELECT inverter_id, COUNT(*)*5/60.0 AS fault_hours FROM fault_events GROUP BY 1),
+        pr AS (SELECT inverter_id, AVG(pr) AS avg_pr FROM v_inverter_month_pr
+               WHERE pr IS NOT NULL AND pr BETWEEN 0 AND 1.5 GROUP BY 1)
+        SELECT i.inverter_id, i.kwp, i.n_strings, i.n_modules,
+               ROUND(e.lifetime_kwh,0) AS lifetime_kwh,
+               ROUND(e.lifetime_kwh/NULLIF(i.kwp,0),0) AS specific_yield_kwh_per_kwp,
+               ROUND(pr.avg_pr,3) AS avg_pr,
+               ROUND(COALESCE(f.fault_hours,0),0) AS fault_hours
+        FROM dim_inverters i
+        LEFT JOIN e USING(inverter_id)
+        LEFT JOIN f USING(inverter_id)
+        LEFT JOIN pr USING(inverter_id)
+    """)
+    print("  v_inverter_month_pr, v_inverter_day_pr, v_inverter_summary")
 
     con.close()
     print("\n✅ Done — solar.duckdb is ready.")

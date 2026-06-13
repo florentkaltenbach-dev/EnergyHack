@@ -41,13 +41,20 @@ def query_database(sql: str) -> str:
     - fact_plant     → plant-wide per timestamp (ts, irradiation_wm2, altitude_deg,
                        dv_pct, evu_pct, plant_pac_kw, temp_module_c, ...)
     - fault_events   → real faults only (ts, inverter_id, error_code, op_state)
-    - dim_error_desc → error_code → description (join on error_code)
+    - dim_error_desc → error_code/hex → description (error_code DECIMAL, hex e.g. '0A0013')
     - dim_inverters  → nameplate per inverter (inverter_id, kwp, module_type, ...)
     - dim_tariff     → weekly feed-in price (inverter_id, week_start, tariff_ct_kwh ct/kWh)
     - tickets_recent / tickets_legacy → maintenance records
 
+    Analytics VIEWS (use for Performance-Ratio / ranking / trend questions):
+    - v_inverter_month_pr (inverter_id, month, kwh, kwp, sun_kwh_m2, pr)
+    - v_inverter_day_pr   (inverter_id, day,   kwh, kwp, sun_kwh_m2, pr)
+    - v_inverter_summary  (inverter_id, kwp, lifetime_kwh, specific_yield_kwh_per_kwp,
+                           avg_pr, fault_hours)
+
     Units: energy kWh = SUM(p_ac_kw)/12.0 (5-min data); revenue € = kWh*tariff_ct_kwh/100.
-    inverter_id looks like 'INV 01.01.001'.
+    PR = (kWh/kWp)/(SUM(irradiation_wm2)/12/1000). inverter_id looks like 'INV 01.01.001'.
+    Never compare raw kWh across inverters (different sizes) — use pr / specific_yield.
 
     DuckDB supports standard SQL plus:
     - date_trunc('month', col)

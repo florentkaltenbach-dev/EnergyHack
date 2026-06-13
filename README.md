@@ -12,10 +12,10 @@ cd solar-mind
 
 # 2. Install dependencies
 pip install duckdb pandas pyarrow openpyxl pvlib plotly streamlit \
-            langgraph langchain langchain-anthropic python-dotenv
+            langgraph langchain langchain-groq python-dotenv
 
-# 3. Add your API key
-echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
+# 3. Add your API key  (free — get one at https://console.groq.com/keys)
+echo "GROQ_API_KEY=gsk_..." > .env
 
 # 4. Copy all data files into data/  (get them from the Enerparc dataset)
 

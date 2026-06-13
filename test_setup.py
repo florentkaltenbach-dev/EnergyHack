@@ -7,6 +7,12 @@ import sys
 import os
 import traceback
 
+# Windows consoles default to cp1252 and choke on the ✅/── chars below.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, ROOT)
 
@@ -21,11 +27,11 @@ print("\n── 1. Environment ────────────────�
 try:
     from dotenv import load_dotenv
     load_dotenv()
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("GROQ_API_KEY", "")
     if api_key:
-        print(f"{PASS} ANTHROPIC_API_KEY found  (ends with …{api_key[-4:]})")
+        print(f"{PASS} GROQ_API_KEY found  (ends with …{api_key[-4:]})")
     else:
-        print(f"{FAIL} ANTHROPIC_API_KEY not set in .env")
+        print(f"{FAIL} GROQ_API_KEY not set in .env")
         errors.append("Missing API key")
 except Exception as e:
     print(f"{FAIL} dotenv import failed: {e}")
@@ -37,7 +43,7 @@ packages = [
     ("duckdb",            "duckdb"),
     ("pandas",            "pandas"),
     ("plotly",            "plotly"),
-    ("langchain_anthropic","langchain_anthropic"),
+    ("langchain_groq",       "langchain_groq"),
     ("langgraph",         "langgraph"),
     ("streamlit",         "streamlit"),
 ]
@@ -63,8 +69,8 @@ else:
         print(f"{PASS} Tables found: {', '.join(tables)}")
 
         # Quick sanity query
-        df = run_query("SELECT COUNT(*) AS n FROM monitoring")
-        print(f"{PASS} monitoring rows: {df['n'].iloc[0]:,}")
+        df = run_query("SELECT COUNT(*) AS n FROM fact_power")
+        print(f"{PASS} fact_power rows: {df['n'].iloc[0]:,}")
     except Exception as e:
         print(f"{FAIL} DB error: {e}")
         errors.append(str(e))
@@ -82,7 +88,7 @@ except Exception as e:
 
 # ── 5. Live API call (small) ───────────────────────────────────────────────────
 print("\n── 5. Live API call ────────────────────────────")
-if not os.getenv("ANTHROPIC_API_KEY"):
+if not os.getenv("GROQ_API_KEY"):
     print(f"{WARN} Skipping — no API key")
 elif not os.path.exists(db_path):
     print(f"{WARN} Skipping — database not loaded yet")

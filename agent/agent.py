@@ -5,7 +5,7 @@ Main agent. P4 imports invoke_agent() from here.
 
 import os
 from dotenv import load_dotenv
-from langchain_anthropic import ChatAnthropic
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage, ToolMessage
 from langgraph.prebuilt import create_react_agent
 
@@ -16,10 +16,15 @@ from agent.prompts import SYSTEM_PROMPT
 load_dotenv()
 
 # ── Build the agent once at import time ───────────────────────────────────────
-_llm = ChatAnthropic(
-    model="claude-sonnet-4-5",
-    api_key=os.getenv("ANTHROPIC_API_KEY"),
+# Groq free tier works in the EU (Gemini's free tier does not). We use openai/gpt-oss-120b:
+# Llama-3.3-70b emitted malformed tool calls on Groq (merging args into the tool name,
+# leaking <function=...> syntax), which broke the ReAct loop. The gpt-oss models are far
+# more reliable at structured function-calling. Reads GROQ_API_KEY from .env.
+_llm = ChatGroq(
+    model="openai/gpt-oss-120b",
+    api_key=os.getenv("GROQ_API_KEY"),
     max_tokens=4096,
+    temperature=0,
 )
 
 _tools = [get_database_schema, query_database, create_chart]
