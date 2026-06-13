@@ -84,3 +84,4 @@ incident_flags · loss_attribution · financial_loss · revenue_loss · work_ord
 validation_cases · validation_exclusions · v_fix_first
 repair_effectiveness
 group_residual_monthly · group_drift_summary
+module_type_degradation
