@@ -1,0 +1,9 @@
+duckdb
+pandas
+openpyxl
+streamlit
+langchain-groq
+langchain-core
+langgraph
+python-dotenv
+matplotlib

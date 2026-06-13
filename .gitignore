@@ -1,0 +1,9 @@
+*.duckdb
+*.env
+data/main_monitoring_data.parquet
+data/errorcodes.parquet
+data/Additional_Data/
+data/Errorcodes/
+__pycache__/
+*.pyc
+.venv/

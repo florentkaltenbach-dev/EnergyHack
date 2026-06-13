@@ -1,0 +1,78 @@
+SOLARMIND 2 — DATABASE SCHEMA (Plant A)
+=====================================================================
+Build:   python db/loader.py        (≈50s, needs raw files in data/)
+Query:   from db.db import run_query, get_schema
+
+KEY FACTS
+---------
+* 65 inverters, IDs normalised as "INV 01.01.001" .. "INV 01.09.065"
+* Time span: 2016-12-31 → 2026-06-01,  5-MINUTE resolution
+* 990,442 timestamps. Power stored LONG (one row per inverter per ts).
+* Total installed capacity: 1793.6 kWp
+
+CRITICAL FORMULAS
+-----------------
+* ENERGY:      kWh = SUM(p_ac_kw) / 12.0   (12 × 5-min per hour, NOT /60)
+* REVENUE:     € = kwh * tariff_ct_kwh / 100.0  (tariff is in EUROcent)
+* DAYTIME:     fact_plant.altitude_deg > 0
+* CURTAILMENT: fact_plant.dv_pct > 0  = operator curtailment (NOT a fault)
+               fact_plant.evu_pct > 0 = grid curtailment     (NOT a fault)
+* DOWNTIME:    fault_events rows = 5-min fault intervals → hours = COUNT(*)*5/60
+
+TABLES
+------
+fact_power      (64M rows)    one row per inverter per 5-min ts
+    ts            TIMESTAMP
+    inverter_id   VARCHAR      'INV 01.01.001'
+    p_ac_kw       DOUBLE
+    i_dc_a        DOUBLE
+    u_dc_v        DOUBLE
+
+fact_plant      (990k rows)   one row per 5-min ts (plant-wide)
+    ts            TIMESTAMP
+    irradiation_wm2  DOUBLE
+    altitude_deg     DOUBLE   >0 = daytime
+    temp_ambient_c   DOUBLE
+    temp_module_c    DOUBLE
+    dv_pct           DOUBLE   operator curtailment %
+    evu_pct          DOUBLE   grid curtailment %
+    plant_pac_kw     DOUBLE
+    cosphi           DOUBLE
+    grid_i_ac_a      DOUBLE
+    grid_s_kva       DOUBLE
+
+fault_events    (439k rows)   only real faults (error_code <> 0)
+    ts            TIMESTAMP
+    inverter_id   VARCHAR
+    error_code    BIGINT       join dim_error_desc.error_code
+    op_state      BIGINT
+
+dim_error_desc  (65 rows)     error code → meaning
+    component     VARCHAR
+    hex           VARCHAR
+    error_code    BIGINT
+    description   VARCHAR
+
+dim_inverters   (65 rows)     per-inverter nameplate
+    inverter_id   VARCHAR
+    location      VARCHAR
+    manufacturer  VARCHAR
+    module_type   VARCHAR
+    wp_per_module DOUBLE
+    n_modules     BIGINT
+    kwp           DOUBLE       installed capacity
+    n_strings     BIGINT
+
+dim_tariff      (37k rows)    weekly feed-in price per inverter
+    inverter_id   VARCHAR
+    week_start    DATE
+    tariff_ct_kwh DOUBLE       EUROcent/kWh
+
+tickets_recent  (73 rows)     service tickets 2020-2026
+tickets_legacy  (11 rows)     service tickets 2019-2020
+
+ANALYTICS VIEWS (pre-built by loader)
+--------------------------------------
+v_inverter_month_pr   inverter × month  → kwh, kwp, sun_kwh_m2, pr
+v_inverter_day_pr     inverter × day    → kwh, kwp, sun_kwh_m2, pr  (daytime only)
+v_inverter_summary    inverter          → lifetime_kwh, specific_yield, avg_pr, fault_hours
