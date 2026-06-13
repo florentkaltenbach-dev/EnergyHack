@@ -6,4 +6,5 @@ data/Additional_Data/
 data/Errorcodes/
 __pycache__/
 *.pyc
+*.log
 .venv/

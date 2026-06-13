@@ -15,8 +15,8 @@ CRITICAL FORMULAS
 * ENERGY:      kWh = SUM(p_ac_kw) / 12.0   (12 × 5-min per hour, NOT /60)
 * REVENUE:     € = kwh * tariff_ct_kwh / 100.0  (tariff is in EUROcent)
 * DAYTIME:     fact_plant.altitude_deg > 0
-* CURTAILMENT: fact_plant.dv_pct > 0  = operator curtailment (NOT a fault)
-               fact_plant.evu_pct > 0 = grid curtailment     (NOT a fault)
+* CURTAILMENT: DV/EVU are allowed-power setpoints. 100 = unrestricted.
+               A non-null value below 99.5 means curtailed (NOT a fault).
 * DOWNTIME:    fault_events rows = 5-min fault intervals → hours = COUNT(*)*5/60
 
 TABLES
@@ -34,8 +34,8 @@ fact_plant      (990k rows)   one row per 5-min ts (plant-wide)
     altitude_deg     DOUBLE   >0 = daytime
     temp_ambient_c   DOUBLE
     temp_module_c    DOUBLE
-    dv_pct           DOUBLE   operator curtailment %
-    evu_pct          DOUBLE   grid curtailment %
+    dv_pct           DOUBLE   operator allowed-power setpoint %
+    evu_pct          DOUBLE   grid allowed-power setpoint %
     plant_pac_kw     DOUBLE
     cosphi           DOUBLE
     grid_i_ac_a      DOUBLE
@@ -76,3 +76,9 @@ ANALYTICS VIEWS (pre-built by loader)
 v_inverter_month_pr   inverter × month  → kwh, kwp, sun_kwh_m2, pr
 v_inverter_day_pr     inverter × day    → kwh, kwp, sun_kwh_m2, pr  (daytime only)
 v_inverter_summary    inverter          → lifetime_kwh, specific_yield, avg_pr, fault_hours
+
+ANALYTICAL TABLES (built by analysis scripts)
+------------------------------------------------
+baseline_pr · expected_power · degradation_trend · degradation_rates
+incident_flags · loss_attribution · financial_loss · revenue_loss · work_orders
+v_fix_first
